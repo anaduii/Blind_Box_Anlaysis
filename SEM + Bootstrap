@@ -1,0 +1,148 @@
+#Full SEM Model for Blindbox study 
+import pandas as pd
+import numpy as np
+import semopy as sem
+
+###############################################################
+# 0. LOAD YOUR DATA
+###############################################################
+df = pd.read_csv("your_data.csv")
+
+
+###############################################################
+# 1. SEM MODEL SPECIFICATION 
+###############################################################
+model_desc = """
+
+# ============================
+# Measurement Model
+# ============================
+
+Uncertainty =~ unc1 + unc2 + unc3 + unc4
+EmotionalValue =~ ev1 + ev2 + ev3
+SocialValue =~ sv1 + sv2 + sv3
+PurchaseIntention =~ pi1 + pi2 + pi3
+
+# ============================
+# Structural Model
+# ============================
+
+# Uncertainty → values
+EmotionalValue ~ a1 * Uncertainty
+SocialValue ~ a2 * Uncertainty
+
+# Values → Purchase Intention
+PurchaseIntention ~ b1 * EmotionalValue
+PurchaseIntention ~ b2 * SocialValue
+
+# Direct effect
+PurchaseIntention ~ c_prime * Uncertainty
+
+# Optional variances (safe to include)
+Uncertainty ~~ Uncertainty
+EmotionalValue ~~ EmotionalValue
+SocialValue ~~ SocialValue
+PurchaseIntention ~~ PurchaseIntention
+"""
+
+
+###############################################################
+# 2. FIT SEM MODEL
+###############################################################
+print("\n=== FITTING SEM MODEL ===")
+model = sem.Model(model_desc)
+result = model.fit(df)
+
+params = model.inspect()
+print(params)
+
+
+###############################################################
+# 3. EXTRACT COEFFICIENTS FOR INDIRECT EFFECTS
+###############################################################
+def get_coef(name):
+    row = params[params["name"] == name]
+    return float(row["Estimate"].values[0])
+
+a1 = get_coef("a1")
+a2 = get_coef("a2")
+b1 = get_coef("b1")
+b2 = get_coef("b2")
+c_prime = get_coef("c_prime")
+
+# INDIRECT EFFECTS
+indirect_EV = a1 * b1
+indirect_SV = a2 * b2
+total_indirect = indirect_EV + indirect_SV
+
+# TOTAL EFFECT
+total_effect = c_prime + total_indirect
+
+
+###############################################################
+# 4. PRINT INDIRECT, DIRECT, TOTAL EFFECTS
+###############################################################
+print("\n=== INDIRECT EFFECTS ===")
+print(f"UNC → EV → PI: {indirect_EV:.4f}")
+print(f"UNC → SV → PI: {indirect_SV:.4f}")
+print(f"TOTAL INDIRECT: {total_indirect:.4f}")
+
+print("\n=== DIRECT EFFECT ===")
+print(f"UNC → PI (c'): {c_prime:.4f}")
+
+print("\n=== TOTAL EFFECT ===")
+print(f"UNC → PI TOTAL: {total_effect:.4f}")
+
+
+###############################################################
+# 5. BOOTSTRAPPING FOR INDIRECT EFFECTS (95% CI)
+###############################################################
+def bootstrap_indirect(df, model_desc, n_boot=500):
+    results = []
+
+    for _ in range(n_boot):
+        sample = df.sample(len(df), replace=True)
+        m = sem.Model(model_desc)
+
+        try:
+            m.fit(sample)
+            p = m.inspect()
+
+            def g(name):
+                row = p[p["name"] == name]
+                return float(row["Estimate"].values[0])
+
+            a1 = g("a1"); b1 = g("b1")
+            a2 = g("a2"); b2 = g("b2")
+
+            indirect_EV = a1 * b1
+            indirect_SV = a2 * b2
+            total_indirect = indirect_EV + indirect_SV
+
+            results.append([indirect_EV, indirect_SV, total_indirect])
+
+        except:
+            pass
+
+    return np.array(results)
+
+print("\n=== RUNNING BOOTSTRAP (500 samples) ===")
+boot = bootstrap_indirect(df, model_desc, n_boot=500)
+
+labels = ["UNC → EV → PI", "UNC → SV → PI", "Total Indirect"]
+
+print("\n=== BOOTSTRAPPED 95% CONFIDENCE INTERVALS ===")
+for i in range(3):
+    est = np.mean(boot[:, i])
+    lo = np.percentile(boot[:, i], 2.5)
+    hi = np.percentile(boot[:, i], 97.5)
+    print(f"{labels[i]}: {est:.4f} (95% CI: {lo:.4f} — {hi:.4f})")
+
+
+###############################################################
+# 6. FIT STATISTICS
+###############################################################
+fit = sem.calc_stats(model)
+print("\n=== FIT INDICES ===")
+print(fit.T)
+
