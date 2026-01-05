@@ -1,0 +1,232 @@
+#Full SEM Model for Blindbox study 
+import pandas as pd
+import numpy as np
+import semopy as sem
+
+###############################################################
+# 0. LOAD YOUR DATA
+###############################################################
+df = pd.read_csv("mock_blindbox_sem_data.csv")
+###############################################################
+#Defining items 
+item_text = {
+    "unc1": "Before opening the blind box, I can’t judge the specific style of the product",
+    "unc2": "Before opening the blind box, I’m not sure whether the goods meet the expectations",
+    "unc3": "Before I open the blind box, I can’t be sure whether the goods are as expected",
+    "unc4": "Before opening the blind box, the product outcome is uncertain",
+
+    "ev1": "I enjoy the process of drawing the blind box",
+    "ev2": "Buying a blind box can bring me happiness",
+    "ev3": "I was looking forward to the process of extracting the blind box",
+
+    "sv1": "Buying a blind box can strengthen my communication with my friends",
+    "sv2": "Buying blind boxes allows me to meet new friends",
+    "sv3": "Buying a blind box shows my unique personality",
+
+    "pi1": "I will buy a blind box",
+    "pi2": "I will buy the blind box again",
+    "pi3": "I look forward to buying the blind box again"
+}
+
+#Defining constructs 
+constructs = {
+    "Uncertainty": ["unc1", "unc2", "unc3", "unc4"],
+    "Emotional value": ["ev1", "ev2", "ev3"],
+    "Social value": ["sv1", "sv2", "sv3"],
+    "Purchase intention": ["pi1", "pi2", "pi3"]
+}
+
+#Reliability functions
+def cronbach_alpha(df, items):
+    scores = df[items]
+    item_vars = scores.var(axis=0, ddof=1)
+    total_var = scores.sum(axis=1).var(ddof=1)
+    k = len(items)
+    return (k / (k - 1)) * (1 - item_vars.sum() / total_var)
+
+
+def composite_reliability(loadings):
+    return (loadings.sum() ** 2) / (
+        (loadings.sum() ** 2) + (1 - loadings**2).sum()
+    )
+
+
+def ave(loadings):
+    return (loadings**2).mean()
+
+
+###############################################################
+# 1. SEM MODEL SPECIFICATION 
+###############################################################
+model_desc = """
+
+# ============================
+# Measurement Model
+# ============================
+
+Uncertainty =~ unc1 + unc2 + unc3 + unc4
+EmotionalValue =~ ev1 + ev2 + ev3
+SocialValue =~ sv1 + sv2 + sv3
+PurchaseIntention =~ pi1 + pi2 + pi3
+
+# ============================
+# Structural Model
+# ============================
+
+# Uncertainty → values
+EmotionalValue ~ a1 * Uncertainty
+SocialValue ~ a2 * Uncertainty
+
+# Values → Purchase Intention
+PurchaseIntention ~ b1 * EmotionalValue
+PurchaseIntention ~ b2 * SocialValue
+
+# Direct effect
+PurchaseIntention ~ c_prime * Uncertainty
+
+# Optional variances (safe to include)
+Uncertainty ~~ Uncertainty
+EmotionalValue ~~ EmotionalValue
+SocialValue ~~ SocialValue
+PurchaseIntention ~~ PurchaseIntention
+"""
+
+
+###############################################################
+# 2. FIT SEM MODEL
+###############################################################
+print("\n=== FITTING SEM MODEL ===")
+model = sem.Model(model_desc)
+result = model.fit(df)
+
+params = model.inspect()
+print(params)
+
+###############################################################
+# 2.5 MEASUREMENT MODEL ANALYSIS
+###############################################################
+#Extract standardized loadings
+params_std = model.inspect(std_est=True)
+
+print(params_std.columns)
+
+loadings = params_std[
+    (params_std["op"] == "~") &
+    (params_std["lval"].isin(constructs.keys()))
+][["lval", "rval", "Est.Std"]]
+
+loadings.columns = ["Latent variable", "Item", "Factor loading"]
+
+#Building and displaying journal style table
+rows = []
+
+for latent, items in constructs.items():
+    subset = loadings[loadings["Latent variable"] == latent]
+    lambdas = subset["Factor loading"].values
+
+    alpha = cronbach_alpha(df, items)
+    cr = composite_reliability(lambdas)
+    ave_val = ave(lambdas)
+
+    first = True
+    for _, r in subset.iterrows():
+        rows.append({
+            "Latent variable": latent if first else "",
+            "Item": item_text[r["Item"]],
+            "Factor loading": round(r["Factor loading"], 3),
+            "α": round(alpha, 3) if first else "",
+            "CR": round(cr, 3) if first else "",
+            "AVE": round(ave_val, 3) if first else ""
+        })
+        first = False
+        
+measurement_table = pd.DataFrame(rows)
+
+print("\n=== MEASUREMENT MODEL RESULTS ===")
+print(measurement_table.to_string(index=False))
+
+###############################################################
+# 3. EXTRACT COEFFICIENTS FOR INDIRECT EFFECTS
+###############################################################
+def get_coef(lhs, rhs):
+    row = params[(params["lval"] == lhs) & (params["rval"] == rhs)]
+    return float(row["Estimate"].values[0])
+
+a1 = get_coef("EmotionalValue", "Uncertainty")
+a2 = get_coef("SocialValue", "Uncertainty")
+b1 = get_coef("PurchaseIntention", "EmotionalValue")
+b2 = get_coef("PurchaseIntention", "SocialValue")
+c_prime = get_coef("PurchaseIntention", "Uncertainty")
+
+# INDIRECT EFFECTS
+indirect_EV = a1 * b1
+indirect_SV = a2 * b2
+total_indirect = indirect_EV + indirect_SV
+
+# TOTAL EFFECT
+total_effect = c_prime + total_indirect
+
+
+###############################################################
+# 4. PRINT INDIRECT, DIRECT, TOTAL EFFECTS
+###############################################################
+print("\n=== INDIRECT EFFECTS ===")
+print(f"UNC → EV → PI: {indirect_EV:.4f}")
+print(f"UNC → SV → PI: {indirect_SV:.4f}")
+print(f"TOTAL INDIRECT: {total_indirect:.4f}")
+
+print("\n=== DIRECT EFFECT ===")
+print(f"UNC → PI (c'): {c_prime:.4f}")
+
+print("\n=== TOTAL EFFECT ===")
+print(f"UNC → PI TOTAL: {total_effect:.4f}")
+
+
+###############################################################
+# 5. BOOTSTRAPPING FOR INDIRECT EFFECTS (95% CI)
+###############################################################
+def bootstrap_indirect(df, model_desc, n_boot=500):
+    results = []
+
+    for _ in range(n_boot):
+        sample = df.sample(len(df), replace=True)
+        m = sem.Model(model_desc)
+
+        try:
+            m.fit(sample)
+            p = m.inspect()
+
+            # extract coefficients
+            def g(name):
+                row = p[p["lval"] == name]
+                return float(row["Estimate"].values[0])
+
+            a1 = g("a1");  b1 = g("b1")
+            a2 = g("a2");  b2 = g("b2")
+
+            indirect_EV = a1 * b1
+            indirect_SV = a2 * b2
+            total_indirect = indirect_EV + indirect_SV
+
+            results.append([indirect_EV, indirect_SV, total_indirect])
+
+        except Exception:
+            continue
+
+    results = np.array(results)
+
+    if results.ndim != 2:
+        raise ValueError(
+            f"bootstrap returned array with shape {results.shape}, "
+            "expected (n_boot_successes, 3)."
+        )
+
+    return results
+
+###############################################################
+# 6. FIT STATISTICS
+###############################################################
+fit = sem.calc_stats(model)
+print("\n=== FIT INDICES ===")
+print(fit.T)
+
