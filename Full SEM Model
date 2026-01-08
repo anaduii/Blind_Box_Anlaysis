@@ -73,10 +73,10 @@ model_desc = """
 # Measurement Model
 # ============================
 
-Uncertainty =~ unc1 + unc2 + unc3 + unc4
+Uncertainty =~ unc1 + unc2 + unc3
 EmotionalValue =~ ev1 + ev2 + ev3
-SocialValue =~ sv1 + sv2 + sv3
-PurchaseIntention =~ pi1 + pi2 + pi3
+SocialValue =~ sv1 + sv2 + sv3 + sv4
+PurchaseIntention =~ pi1 + pi2 + pi3 + pi4
 
 # ============================
 # Structural Model
