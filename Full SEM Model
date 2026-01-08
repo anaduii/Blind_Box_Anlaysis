@@ -1,255 +1,482 @@
-###############################################################
-# Generate Mock Data for Blind Box SEM Study
-# Matches demographic profile from original paper (Table 1)
-###############################################################
-
+#Full SEM Model for Blindbox study 
 import pandas as pd
 import numpy as np
-from scipy import stats as scipy_stats
-
-# Set seed for reproducibility
-np.random.seed(42)
-
-# Sample size from original study
-n = 375
+import semopy as sem
 
 ###############################################################
-# DEMOGRAPHIC VARIABLES (Control Variables)
+# 0. LOAD YOUR DATA
 ###############################################################
-
-# Gender: More females (based on paper - appears female-dominated)
-# Paper doesn't give exact percentages, but blind box market is ~70% female
-gender = np.random.choice(
-    ['Male', 'Female'], 
-    size=n, 
-    p=[0.30, 0.70]
-)
-
-# Age: Mostly 18-25 years old (young consumers)
-# Distribution based on Table 1:
-age_categories = ['Under 18', '18-25', '26-30', '31-35', 'Over 35']
-age_probs = [0.05, 0.55, 0.25, 0.10, 0.05]  # Heavy concentration in 18-25
-age = np.random.choice(age_categories, size=n, p=age_probs)
-
-# Education: Mainly undergraduate and junior college
-# Based on Table 1 showing mostly college students
-education_categories = ['High school or below', 'Junior college', 'Undergraduate', 'Graduate or above']
-education_probs = [0.10, 0.30, 0.45, 0.15]
-education = np.random.choice(education_categories, size=n, p=education_probs)
-
-# Monthly Income: 46.9% over 5,000 yuan (from paper)
-# Approximately: <2000, 2000-3000, 3000-5000, >5000
-income_categories = ['Under 2000', '2000-3000', '3000-5000', 'Over 5000']
-income_probs = [0.15, 0.18, 0.20, 0.47]  # 46.9% over 5000
-monthly_income = np.random.choice(income_categories, size=n, p=income_probs)
-
-# Purchase frequency (additional control variable - common in consumer studies)
-purchase_freq_categories = ['First time', 'Occasionally', 'Regularly', 'Frequently']
-purchase_frequency = np.random.choice(
-    purchase_freq_categories, 
-    size=n, 
-    p=[0.15, 0.35, 0.35, 0.15]
-)
+df = pd.read_csv("mock_blindbox_sem_data.csv")
 
 ###############################################################
-# CONSUMPTION PURPOSE (Moderator Variable)
+# Defining items 
 ###############################################################
+item_text = {
+    # Uncertainty items (3 items)
+    "unc1": "Before opening the blind box, I can't judge the specific style of the product",
+    "unc2": "Before opening the blind box, I'm not sure whether the goods meet the expectations",
+    "unc3": "Before I open the blind box, I can't be sure whether the goods are as expected",
 
-# From paper: N=208 process-oriented, N=167 result-oriented
-# That's 55.5% process, 44.5% result
-purpose = np.random.choice(
-    [0, 1],  # 0=result-oriented, 1=process-oriented
-    size=n,
-    p=[0.445, 0.555]
-)
+    # Emotional Value items (3 items)
+    "ev1": "I enjoy the process of drawing the blind box",
+    "ev2": "Buying a blind box can bring me happiness",
+    "ev3": "I was looking forward to the process of extracting the blind box",
 
-###############################################################
-# LATENT VARIABLE INDICATORS
-###############################################################
+    # Social Value items (4 items - using first 3 for model, 4th is bonus)
+    "sv1": "Buying a blind box can strengthen my communication with my friends",
+    "sv2": "Buying blind boxes allows me to meet new friends",
+    "sv3": "Buying a blind box shows my unique personality",
+    "sv4": "The blind box has become a bridge between me and other blind box players",
 
-# We'll generate correlated data that reflects the paper's findings:
-# - Uncertainty → Emotional Value: POSITIVE (β = 0.443)
-# - Uncertainty → Social Value: POSITIVE (β = 0.339)
-# - Emotional Value → Purchase Intention: POSITIVE (β = 0.392)
-# - Social Value → Purchase Intention: POSITIVE (β = 0.290)
-
-# Create base latent scores
-uncertainty_base = np.random.normal(0, 1, n)
-emotional_value_base = 0.443 * uncertainty_base + np.random.normal(0, 0.7, n)
-social_value_base = 0.339 * uncertainty_base + np.random.normal(0, 0.8, n)
-purchase_intention_base = (
-    0.392 * emotional_value_base + 
-    0.290 * social_value_base + 
-    np.random.normal(0, 0.5, n)
-)
-
-# Add moderator effects
-# Process-oriented consumers have stronger emotional responses
-purpose_effect_ev = np.where(purpose == 1, 0.15, 0)  # Boost for process-oriented
-emotional_value_base += purpose_effect_ev * uncertainty_base
-
-# Result-oriented consumers focus more on outcomes
-purpose_effect_pi = np.where(purpose == 0, 0.10, 0)
-purchase_intention_base += purpose_effect_pi
-
-# Standardize to 0-1 range then scale to 1-7 (Likert scale)
-def standardize_to_likert(arr, mean=4, std=1.2):
-    """Convert normal distribution to 7-point Likert scale"""
-    standardized = (arr - arr.mean()) / arr.std()
-    scaled = mean + (standardized * std)
-    # Clip to 1-7 range and round to nearest 0.5 (common in surveys)
-    clipped = np.clip(scaled, 1, 7)
-    return np.round(clipped * 2) / 2  # Round to nearest 0.5
-
-# Generate individual items with factor loadings
-# Uncertainty items (4 items)
-unc1 = standardize_to_likert(uncertainty_base + np.random.normal(0, 0.3, n))
-unc2 = standardize_to_likert(uncertainty_base + np.random.normal(0, 0.3, n))
-unc3 = standardize_to_likert(uncertainty_base + np.random.normal(0, 0.3, n))
-unc4 = standardize_to_likert(uncertainty_base + np.random.normal(0, 0.3, n))
-
-# Emotional Value items (3 items)
-ev1 = standardize_to_likert(emotional_value_base + np.random.normal(0, 0.3, n))
-ev2 = standardize_to_likert(emotional_value_base + np.random.normal(0, 0.3, n))
-ev3 = standardize_to_likert(emotional_value_base + np.random.normal(0, 0.3, n))
-
-# Social Value items (3 items)
-sv1 = standardize_to_likert(social_value_base + np.random.normal(0, 0.3, n))
-sv2 = standardize_to_likert(social_value_base + np.random.normal(0, 0.3, n))
-sv3 = standardize_to_likert(social_value_base + np.random.normal(0, 0.3, n))
-
-# Purchase Intention items (3 items)
-pi1 = standardize_to_likert(purchase_intention_base + np.random.normal(0, 0.3, n))
-pi2 = standardize_to_likert(purchase_intention_base + np.random.normal(0, 0.3, n))
-pi3 = standardize_to_likert(purchase_intention_base + np.random.normal(0, 0.3, n))
+    # Purchase Intention items (4 items - using first 3 for model, 4th is bonus)
+    "pi1": "I will buy a blind box",
+    "pi2": "I will buy a blind box again",
+    "pi3": "I look forward to buying the blind box again",
+    "pi4": "I am happy to recommend blind boxes to my friends"
+}
 
 ###############################################################
-# CREATE DATAFRAME
+# Defining constructs 
 ###############################################################
+constructs = {
+    "Uncertainty": ["unc1", "unc2", "unc3"], #We used a 3-item scale for uncertainty (adapted from Zhang & Liu, 2010), whereas the original study used 4 items
+    "Emotional value": ["ev1", "ev2", "ev3"],
+    "Social value": ["sv1", "sv2", "sv3", "sv4"],  # Using all 4 items
+    "Purchase intention": ["pi1", "pi2", "pi3", "pi4"]  # Using all 4 items
+}
 
-df = pd.DataFrame({
-    # Demographics (Control Variables)
-    'gender': gender,
-    'age': age,
-    'education': education,
-    'monthly_income': monthly_income,
-    'purchase_frequency': purchase_frequency,
+#Reliability functions
+def cronbach_alpha(df, items):
+    scores = df[items]
+    item_vars = scores.var(axis=0, ddof=1)
+    total_var = scores.sum(axis=1).var(ddof=1)
+    k = len(items)
+    return (k / (k - 1)) * (1 - item_vars.sum() / total_var)
+
+
+def composite_reliability(loadings):
+    return (loadings.sum() ** 2) / (
+        (loadings.sum() ** 2) + (1 - loadings**2).sum()
+    )
+
+
+def ave(loadings):
+    return (loadings**2).mean()
+
+
+###############################################################
+# 1. SEM MODEL SPECIFICATION 
+###############################################################
+model_desc = """
+
+# ============================
+# Measurement Model
+# ============================
+
+Uncertainty =~ unc1 + unc2 + unc3 + unc4
+EmotionalValue =~ ev1 + ev2 + ev3
+SocialValue =~ sv1 + sv2 + sv3
+PurchaseIntention =~ pi1 + pi2 + pi3
+
+# ============================
+# Structural Model
+# ============================
+
+# Uncertainty → values
+EmotionalValue ~ a1 * Uncertainty
+SocialValue ~ a2 * Uncertainty
+
+# Values → Purchase Intention
+PurchaseIntention ~ b1 * EmotionalValue
+PurchaseIntention ~ b2 * SocialValue
+
+# Direct effect
+PurchaseIntention ~ c_prime * Uncertainty
+
+# Optional variances (safe to include)
+Uncertainty ~~ Uncertainty
+EmotionalValue ~~ EmotionalValue
+SocialValue ~~ SocialValue
+PurchaseIntention ~~ PurchaseIntention
+"""
+
+
+###############################################################
+# 2. FIT SEM MODEL
+###############################################################
+print("\n=== FITTING SEM MODEL ===")
+model = sem.Model(model_desc)
+result = model.fit(df)
+
+params = model.inspect()
+print(params)
+
+###############################################################
+# 2.5 MEASUREMENT MODEL ANALYSIS
+###############################################################
+#Extract standardized loadings
+params_std = model.inspect(std_est=True)
+
+print(params_std.columns)
+
+loadings = params_std[
+    (params_std["op"] == "~") &
+    (params_std["lval"].isin(constructs.keys()))
+][["lval", "rval", "Est. Std"]]
+
+loadings.columns = ["Latent variable", "Item", "Factor loading"]
+
+#Building and displaying journal style table
+rows = []
+
+for latent, items in constructs.items():
+    subset = loadings[loadings["Latent variable"] == latent]
+    lambdas = subset["Factor loading"].values
+
+    alpha = cronbach_alpha(df, items)
+    cr = composite_reliability(lambdas)
+    ave_val = ave(lambdas)
+
+    first = True
+    for _, r in subset.iterrows():
+        rows.append({
+            "Latent variable": latent if first else "",
+            "Item": item_text[r["Item"]],
+            "Factor loading": round(r["Factor loading"], 3),
+            "α": round(alpha, 3) if first else "",
+            "CR": round(cr, 3) if first else "",
+            "AVE": round(ave_val, 3) if first else ""
+        })
+        first = False
+        
+measurement_table = pd.DataFrame(rows)
+
+print("\n=== MEASUREMENT MODEL RESULTS ===")
+print(measurement_table.to_string(index=False))
+
+###############################################################
+# 3. EXTRACT COEFFICIENTS FOR INDIRECT EFFECTS
+###############################################################
+def get_coef(lhs, rhs):
+    row = params[(params["lval"] == lhs) & (params["rval"] == rhs)]
+    return float(row["Estimate"].values[0])
+
+a1 = get_coef("EmotionalValue", "Uncertainty")
+a2 = get_coef("SocialValue", "Uncertainty")
+b1 = get_coef("PurchaseIntention", "EmotionalValue")
+b2 = get_coef("PurchaseIntention", "SocialValue")
+c_prime = get_coef("PurchaseIntention", "Uncertainty")
+
+# INDIRECT EFFECTS
+indirect_EV = a1 * b1
+indirect_SV = a2 * b2
+total_indirect = indirect_EV + indirect_SV
+
+# TOTAL EFFECT
+total_effect = c_prime + total_indirect
+
+
+###############################################################
+# 4. PRINT INDIRECT, DIRECT, TOTAL EFFECTS
+###############################################################
+print("\n=== INDIRECT EFFECTS ===")
+print(f"UNC → EV → PI: {indirect_EV:.4f}")
+print(f"UNC → SV → PI: {indirect_SV:.4f}")
+print(f"TOTAL INDIRECT: {total_indirect:.4f}")
+
+print("\n=== DIRECT EFFECT ===")
+print(f"UNC → PI (c'): {c_prime:.4f}")
+
+print("\n=== TOTAL EFFECT ===")
+print(f"UNC → PI TOTAL: {total_effect:.4f}")
+
+
+###############################################################
+# 5. BOOTSTRAPPING FOR INDIRECT EFFECTS (95% CI)
+###############################################################
+def bootstrap_indirect(df, model_desc, n_boot=5000):
+    results = []
+
+    for _ in range(n_boot):
+        sample = df.sample(len(df), replace=True)
+        m = sem.Model(model_desc)
+
+        try:
+            m.fit(sample)
+            p = m.inspect()
+
+            # extract coefficients
+            def g(name):
+                row = p[p["lval"] == name]
+                return float(row["Estimate"].values[0])
+
+            a1 = g("a1");  b1 = g("b1")
+            a2 = g("a2");  b2 = g("b2")
+
+            indirect_EV = a1 * b1
+            indirect_SV = a2 * b2
+            total_indirect = indirect_EV + indirect_SV
+
+            results.append([indirect_EV, indirect_SV, total_indirect])
+
+        except Exception:
+            continue
+
+    results = np.array(results)
+
+    if results.ndim != 2:
+        raise ValueError(
+            f"bootstrap returned array with shape {results.shape}, "
+            "expected (n_boot_successes, 3)."
+        )
+
+    return results
+
+###############################################################
+# 6. FIT STATISTICS
+###############################################################
+fit = sem.calc_stats(model)
+print("\n=== FIT INDICES ===")
+print(fit.T)
+
+###############################################################
+# 7. MODERATOR ANALYSIS FUNCTIONS
+###############################################################
+# ADD ALL THE MODERATOR FUNCTIONS HERE
+
+from scipy import stats  # Add this import at the top of your file
+
+def run_multigroup_analysis(df, model_desc, group_var='purpose'):
+    """
+    Run multi-group SEM to test moderating effects of consumption purpose
     
-    # Moderator Variable
-    'purpose': purpose,
+    Parameters:
+    -----------
+    df : DataFrame
+        Your data with a 'purpose' column (0=result-oriented, 1=process-oriented)
+    model_desc : str
+        The SEM model specification
+    group_var : str
+        Name of the grouping variable
+    """
     
-    # Uncertainty indicators
-    'unc1': unc1,
-    'unc2': unc2,
-    'unc3': unc3,
-    'unc4': unc4,
+    print("\n" + "="*60)
+    print("MULTI-GROUP ANALYSIS: CONSUMPTION PURPOSE AS MODERATOR")
+    print("="*60)
     
-    # Emotional Value indicators
-    'ev1': ev1,
-    'ev2': ev2,
-    'ev3': ev3,
+    # Split data by consumption purpose
+    group_labels = df[group_var].unique()
     
-    # Social Value indicators
-    'sv1': sv1,
-    'sv2': sv2,
-    'sv3': sv3,
+    if len(group_labels) != 2:
+        print(f"Warning: Expected 2 groups, found {len(group_labels)}")
     
-    # Purchase Intention indicators
-    'pi1': pi1,
-    'pi2': pi2,
-    'pi3': pi3
-})
+    # Assuming 0 = result-oriented, 1 = process-oriented
+    df_result = df[df[group_var] == 0].copy()
+    df_process = df[df[group_var] == 1].copy()
+    
+    print(f"\nSample sizes:")
+    print(f"  Result-oriented (goal): n = {len(df_result)}")
+    print(f"  Process-oriented (experience): n = {len(df_process)}")
+    
+    # Fit model for each group
+    print("\n" + "-"*60)
+    print("RESULT-ORIENTED GROUP")
+    print("-"*60)
+    model_result = sem.Model(model_desc)
+    model_result.fit(df_result)
+    params_result = model_result.inspect()
+    
+    print("\n" + "-"*60)
+    print("PROCESS-ORIENTED GROUP")
+    print("-"*60)
+    model_process = sem.Model(model_desc)
+    model_process.fit(df_process)
+    params_process = model_process.inspect()
+    
+    # Extract path coefficients for comparison
+    paths_to_compare = [
+        ("Uncertainty", "EmotionalValue", "a1"),
+        ("Uncertainty", "SocialValue", "a2"),
+        ("EmotionalValue", "PurchaseIntention", "b1"),
+        ("SocialValue", "PurchaseIntention", "b2"),
+        ("Uncertainty", "PurchaseIntention", "c_prime")
+    ]
+    
+    comparison_results = []
+    
+    for rval, lval, label in paths_to_compare:
+        # Get coefficients from each group
+        coef_result = params_result[
+            (params_result["lval"] == lval) & 
+            (params_result["rval"] == rval)
+        ]["Estimate"].values[0]
+        
+        coef_process = params_process[
+            (params_process["lval"] == lval) & 
+            (params_process["rval"] == rval)
+        ]["Estimate"].values[0]
+        
+        se_result = params_result[
+            (params_result["lval"] == lval) & 
+            (params_result["rval"] == rval)
+        ]["SE"].values[0]
+        
+        se_process = params_process[
+            (params_process["lval"] == lval) & 
+            (params_process["rval"] == rval)
+        ]["SE"].values[0]
+        
+        # Calculate z-score for difference test
+        z_diff = (coef_result - coef_process) / np.sqrt(se_result**2 + se_process**2)
+        p_value = 2 * (1 - stats.norm.cdf(abs(z_diff)))
+        
+        comparison_results.append({
+            "Path": f"{rval} → {lval}",
+            "Result-oriented β": round(coef_result, 4),
+            "Process-oriented β": round(coef_process, 4),
+            "Difference": round(coef_result - coef_process, 4),
+            "z-score": round(z_diff, 3),
+            "p-value": round(p_value, 4),
+            "Significant?": "***" if p_value < 0.001 else "**" if p_value < 0.01 else "*" if p_value < 0.05 else "ns"
+        })
+    
+    comparison_df = pd.DataFrame(comparison_results)
+    
+    print("\n" + "="*60)
+    print("PATH COEFFICIENT COMPARISON ACROSS GROUPS")
+    print("="*60)
+    print(comparison_df.to_string(index=False))
+    
+    # Calculate indirect effects for each group
+    print("\n" + "="*60)
+    print("INDIRECT EFFECTS BY GROUP")
+    print("="*60)
+    
+    def calc_indirect(params_df):
+        def get_coef(lhs, rhs):
+            row = params_df[(params_df["lval"] == lhs) & (params_df["rval"] == rhs)]
+            return float(row["Estimate"].values[0])
+        
+        a1 = get_coef("EmotionalValue", "Uncertainty")
+        a2 = get_coef("SocialValue", "Uncertainty")
+        b1 = get_coef("PurchaseIntention", "EmotionalValue")
+        b2 = get_coef("PurchaseIntention", "SocialValue")
+        
+        return {
+            "Unc→EV→PI": a1 * b1,
+            "Unc→SV→PI": a2 * b2,
+            "Total Indirect": a1 * b1 + a2 * b2
+        }
+    
+    indirect_result = calc_indirect(params_result)
+    indirect_process = calc_indirect(params_process)
+    
+    indirect_comparison = pd.DataFrame({
+        "Indirect Path": list(indirect_result.keys()),
+        "Result-oriented": [round(v, 4) for v in indirect_result.values()],
+        "Process-oriented": [round(v, 4) for v in indirect_process.values()]
+    })
+    
+    print(indirect_comparison.to_string(index=False))
+    
+    return {
+        "model_result": model_result,
+        "model_process": model_process,
+        "comparison_table": comparison_df,
+        "indirect_comparison": indirect_comparison
+    }
+
+
+def interpret_moderation_results(comparison_df):
+    """
+    Interpret results based on the paper's hypotheses
+    """
+    
+    print("\n" + "="*60)
+    print("HYPOTHESIS TESTING RESULTS")
+    print("="*60)
+    
+    hypotheses = [
+        {
+            "H": "H3b",
+            "Description": "UNC → EV stronger for process-oriented",
+            "Path": "Uncertainty → EmotionalValue",
+            "Expected": "Process > Result"
+        },
+        {
+            "H": "H3c", 
+            "Description": "UNC → SV stronger for process-oriented",
+            "Path": "Uncertainty → SocialValue",
+            "Expected": "Process > Result"
+        },
+        {
+            "H": "H4b",
+            "Description": "EV → PI stronger for process-oriented", 
+            "Path": "EmotionalValue → PurchaseIntention",
+            "Expected": "Process > Result"
+        },
+        {
+            "H": "H4c",
+            "Description": "SV → PI no difference by group",
+            "Path": "SocialValue → PurchaseIntention",
+            "Expected": "No difference"
+        }
+    ]
+    
+    for hyp in hypotheses:
+        row = comparison_df[comparison_df["Path"] == hyp["Path"]]
+        if len(row) > 0:
+            result_coef = row["Result-oriented β"].values[0]
+            process_coef = row["Process-oriented β"].values[0]
+            sig = row["Significant?"].values[0]
+            
+            if "Process > Result" in hyp["Expected"]:
+                supported = process_coef > result_coef and sig != "ns"
+            elif "Result > Process" in hyp["Expected"]:
+                supported = result_coef > process_coef and sig != "ns"
+            else:  # No difference
+                supported = sig == "ns"
+            
+            print(f"\n{hyp['H']}: {hyp['Description']}")
+            print(f"  Expected: {hyp['Expected']}")
+            print(f"  Result-oriented β: {result_coef:.4f}")
+            print(f"  Process-oriented β: {process_coef:.4f}")
+            print(f"  Significance: {sig}")
+            print(f"  SUPPORTED: {'✓ YES' if supported else '✗ NO'}")
+
 
 ###############################################################
-# SAVE TO CSV
+# 8. RUN MODERATOR ANALYSIS
 ###############################################################
+print("\n" + "="*80)
+print("STEP 7: MODERATOR ANALYSIS")
+print("="*80)
 
-df.to_csv('mock_blindbox_sem_data.csv', index=False)
-
-print("="*60)
-print("MOCK DATA GENERATION COMPLETE")
-print("="*60)
-print(f"\nTotal observations: {len(df)}")
-
-###############################################################
-# DISPLAY DEMOGRAPHIC STATISTICS
-###############################################################
-
-print("\n" + "="*60)
-print("DEMOGRAPHIC PROFILE (Control Variables)")
-print("="*60)
-
-print("\n1. GENDER DISTRIBUTION:")
-print(df['gender'].value_counts())
-print(f"\nPercentages:")
-print(df['gender'].value_counts(normalize=True).round(3) * 100)
-
-print("\n2. AGE DISTRIBUTION:")
-print(df['age'].value_counts().sort_index())
-print(f"\nPercentages:")
-print(df['age'].value_counts(normalize=True).round(3) * 100)
-
-print("\n3. EDUCATION LEVEL:")
-print(df['education'].value_counts())
-print(f"\nPercentages:")
-print(df['education'].value_counts(normalize=True).round(3) * 100)
-
-print("\n4. MONTHLY INCOME:")
-print(df['monthly_income'].value_counts())
-print(f"\nPercentages:")
-print(df['monthly_income'].value_counts(normalize=True).round(3) * 100)
-
-print("\n5. PURCHASE FREQUENCY:")
-print(df['purchase_frequency'].value_counts())
-print(f"\nPercentages:")
-print(df['purchase_frequency'].value_counts(normalize=True).round(3) * 100)
-
-print("\n6. CONSUMPTION PURPOSE (Moderator):")
-purpose_labels = {0: 'Result-oriented', 1: 'Process-oriented'}
-purpose_counts = df['purpose'].map(purpose_labels).value_counts()
-print(purpose_counts)
-print(f"\nPercentages:")
-print(df['purpose'].map(purpose_labels).value_counts(normalize=True).round(3) * 100)
-
-###############################################################
-# DISPLAY DESCRIPTIVE STATISTICS FOR SCALE ITEMS
-###############################################################
-
-print("\n" + "="*60)
-print("DESCRIPTIVE STATISTICS (Scale Items)")
-print("="*60)
-
-scale_items = [col for col in df.columns if col.startswith(('unc', 'ev', 'sv', 'pi'))]
-desc_stats = df[scale_items].describe().round(2)
-print("\n", desc_stats)
-
-###############################################################
-# CORRELATION MATRIX (Quick check)
-###############################################################
-
-print("\n" + "="*60)
-print("CORRELATION MATRIX (Construct Averages)")
-print("="*60)
-
-df['Uncertainty_avg'] = df[['unc1', 'unc2', 'unc3', 'unc4']].mean(axis=1)
-df['EmotionalValue_avg'] = df[['ev1', 'ev2', 'ev3']].mean(axis=1)
-df['SocialValue_avg'] = df[['sv1', 'sv2', 'sv3']].mean(axis=1)
-df['PurchaseIntention_avg'] = df[['pi1', 'pi2', 'pi3']].mean(axis=1)
-
-constructs = ['Uncertainty_avg', 'EmotionalValue_avg', 'SocialValue_avg', 'PurchaseIntention_avg']
-corr_matrix = df[constructs].corr().round(3)
-print("\n", corr_matrix)
-
-# Remove average columns before saving
-df = df.drop(columns=[c for c in df.columns if c.endswith('_avg')])
-df.to_csv('mock_blindbox_sem_data.csv', index=False)
-
-print("\n" + "="*60)
-print("DATA SAVED: mock_blindbox_sem_data.csv")
-print("="*60)
-print("\nThis dataset now includes:")
-print("✓ Control variables (gender, age, education, income, purchase frequency)")
-print("✓ Moderator variable (consumption purpose)")
-print("✓ All scale items (uncertainty, emotional value, social value, purchase intention)")
-print("✓ Demographic distribution matching original study")
-print("✓ Correlations reflecting paper's findings")
+if 'purpose' in df.columns:
+    # Check if purpose column has valid values
+    purpose_values = df['purpose'].unique()
+    print(f"Purpose variable found with values: {purpose_values}")
+    
+    if len(purpose_values) == 2:
+        # Run multi-group analysis
+        moderation_results = run_multigroup_analysis(
+            df, 
+            model_desc, 
+            group_var='purpose'
+        )
+        
+        # Interpret based on hypotheses
+        interpret_moderation_results(moderation_results['comparison_table'])
+        
+    else:
+        print(f"\nWARNING: Expected 2 groups, found {len(purpose_values)}")
+        print("Moderator analysis requires exactly 2 groups (0 and 1)")
+else:
+    print("\nWARNING: No 'purpose' column found in data!")
+    print("Moderator analysis skipped.")
+    print("\nTo enable moderator analysis:")
+    print("1. Add a 'purpose' column to your CSV")
+    print("2. Code it as: 0 = result-oriented, 1 = process-oriented")
+    print("\nExample:")
+    print("  df['purpose'] = np.random.choice([0, 1], size=len(df))")
+    print("  df.to_csv('mock_blindbox_sem_data.csv', index=False)")
