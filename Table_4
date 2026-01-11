@@ -1,0 +1,102 @@
+def pick_col(df, candidates, what):
+    for c in candidates:
+        if c in df.columns:
+            return c
+    raise KeyError(f"Couldn't find a column for {what}. Tried: {candidates}. Available: {df.columns.tolist()}")
+
+SE_COL = pick_col(params, ["SE", "Std. Err", "Std.Err", "Std_Error", "StdError"], "standard error (SE)")
+Z_COL  = None
+P_COL  = None
+
+for cand in ["z-value", "z", "Z", "CR", "t-value", "t", "T"]:
+    if cand in params.columns:
+        Z_COL = cand
+        break
+
+for cand in ["p-value", "p", "P-value", "P", "pval", "pval."]:
+    if cand in params.columns:
+        P_COL = cand
+        break
+
+def get_row(df_params, lhs, rhs):
+    row = df_params[(df_params["lval"] == lhs) & (df_params["rval"] == rhs) & (df_params["op"] == "~")]
+    if row.empty:
+        # some semopy outputs may not include op, so fall back:
+        row = df_params[(df_params["lval"] == lhs) & (df_params["rval"] == rhs)]
+    if row.empty:
+        raise ValueError(f"Could not find parameter row for {rhs} -> {lhs}.")
+    return row.iloc[0]
+
+def get_beta_std(lhs, rhs):
+    row = params_std[
+        (params_std["op"] == "~") &
+        (params_std["lval"] == lhs) &
+        (params_std["rval"] == rhs)
+    ]
+    if row.empty:
+        raise ValueError(f"Could not find standardized path {rhs} -> {lhs}.")
+    return float(row["Est. Std"].values[0])
+
+def get_se(lhs, rhs):
+    r = get_row(params, lhs, rhs)
+    return float(r[SE_COL])
+
+def get_cr(lhs, rhs):
+    r = get_row(params, lhs, rhs)
+    if Z_COL is not None:
+        return float(r[Z_COL])
+    # compute if not provided
+    est = float(r["Estimate"])
+    se  = float(r[SE_COL])
+    return est / se
+
+def get_p(lhs, rhs):
+    r = get_row(params, lhs, rhs)
+    if P_COL is not None:
+        return float(r[P_COL])
+    # approximate from CR as z-test
+    cr = get_cr(lhs, rhs)
+    from math import erf, sqrt
+    Phi = 0.5 * (1 + erf(abs(cr) / sqrt(2)))
+    return 2 * (1 - Phi)
+
+def sig_stars(p):
+    return "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else ""
+
+def support_label(p):
+    return "Support" if p < 0.05 else "Not support"
+
+
+# -----------------------------
+# Build Table 4
+# -----------------------------
+paths = [
+    ("EmotionalValue", "Uncertainty", "Uncertainty → Emotional Value"),
+    ("SocialValue", "Uncertainty", "Uncertainty → Social Value"),
+    ("PurchaseIntention", "EmotionalValue", "Emotional Value → Purchase Intention"),
+    ("PurchaseIntention", "SocialValue", "Social Value → Purchase Intention"),
+]
+
+std_betas, ses, crs, hyps = [], [], [], []
+
+for lhs, rhs, label in paths:
+    beta = get_beta_std(lhs, rhs)
+    se   = get_se(lhs, rhs)
+    cr   = get_cr(lhs, rhs)
+    p    = get_p(lhs, rhs)
+
+    std_betas.append(f"{beta:.3f}{sig_stars(p)}")
+    ses.append(round(se, 3))
+    crs.append(round(cr, 3))
+    hyps.append(support_label(p))
+
+table_4 = pd.DataFrame({
+    " ": [label for _, _, label in paths],
+    "Standardized Coefficients": std_betas,
+    "SE": ses,
+    "CR": crs,
+    "Hypothesis": hyps
+})
+
+table_4
+
