@@ -1,0 +1,394 @@
+###############################################################
+# COMPLETE DATA CLEANING CODE (SIMPLIFIED)
+###############################################################
+
+import pandas as pd
+import numpy as np
+import re
+
+print("="*80)
+print("DATA CLEANING WITH DUPLICATE DETECTION")
+print("="*80)
+
+###############################################################
+# STEP 1: LOAD RAW DATA
+###############################################################
+print("\nSTEP 1: Loading raw data...")
+
+df_raw = pd.read_csv(r'C:\Users\rjjne\Downloads\Blind_Boxes_5.csv', 
+                      skiprows=[1])
+df_raw = df_raw[df_raw['Q1'] != '{"ImportId":"QID1"}'].reset_index(drop=True)
+
+n_initial = len(df_raw)  # STORE THE INITIAL COUNT HERE
+
+print(f"✓ Initial data loaded: {n_initial} total responses")
+
+###############################################################
+# ANALYSIS CONFIGURATION ← ADD HERE
+###############################################################
+INCLUDE_UNC1 = False  # Set to True to include unc1, False to exclude
+
+if INCLUDE_UNC1:
+    print("⚠️  USING ORIGINAL MODEL (with unc1)")
+    print("    Note: unc1 has low loading (0.470) in U.S. sample")
+else:
+    print("✓ USING REVISED MODEL (without unc1)")
+    print("  Improved measurement quality expected")
+    
+###############################################################
+# HELPER FUNCTIONS
+###############################################################
+def clean_likert(series):
+    def extract_num(val):
+        if pd.isna(val):
+            return np.nan
+        val_str = str(val).strip()
+        match = re.search(r'\d+', val_str)
+        if match:
+            return float(match.group())
+        return np.nan
+    return series.apply(extract_num)
+
+def clean_text(series):
+    """Clean text responses (non-numeric)"""
+    def extract_text(val):
+        if pd.isna(val):
+            return np.nan
+        val_str = str(val).strip()
+        # Return the text if it's not empty
+        if val_str and val_str.lower() not in ['nan', 'none', '']:
+            return val_str
+        return np.nan
+    return series.apply(extract_text)
+
+def clean_q1(series):
+    def extract_q1(val):
+        if pd.isna(val):
+            return np.nan
+        val_str = str(val).strip().lower()
+        if 'yes' in val_str:
+            return 1.0
+        elif 'no' in val_str:
+            return 2.0
+        return np.nan
+    return series.apply(extract_q1)
+
+###############################################################
+# STEP 2: CLEAN Q1 VARIABLE
+###############################################################
+print("\n" + "-"*80)
+print("STEP 2: Cleaning Q1 responses...")
+print("-"*80)
+
+df_raw['Q1_clean'] = clean_q1(df_raw['Q1'])
+
+print("\nQ1 Distribution:")
+q1_counts = df_raw['Q1_clean'].value_counts(dropna=False).sort_index()
+for val, count in q1_counts.items():
+    if pd.isna(val):
+        label = "Missing/Invalid"
+    elif val == 1.0:
+        label = "Yes (has experience)"
+    elif val == 2.0:
+        label = "No (no experience)"
+    else:
+        label = f"Unknown"
+    print(f"  {label}: {count}")
+
+###############################################################
+# STEP 3: REMOVE Q1='NO' RESPONSES
+###############################################################
+print("\n" + "-"*80)
+print("STEP 3: Removing Q1='No' responses...")
+print("-"*80)
+
+n_before = len(df_raw)
+df_raw = df_raw[df_raw['Q1_clean'] == 1.0].copy().reset_index(drop=True)
+n_removed_q1 = n_before - len(df_raw)
+
+print(f"✓ Removed {n_removed_q1} responses where Q1='No' (no blind box experience)")
+print(f"✓ Remaining: {len(df_raw)}")
+
+# Verify only Q1='Yes' remain
+print("\nQ1 Distribution after filtering:")
+q1_after = df_raw['Q1_clean'].value_counts(dropna=False)
+print(f"  Yes (1.0): {q1_after.get(1.0, 0)}")
+print(f"  No (2.0): {q1_after.get(2.0, 0)}")
+print(f"  Missing: {df_raw['Q1_clean'].isna().sum()}")
+
+###############################################################
+# STEP 4: REMOVE NA IDs AND DUPLICATE PARTICIPANT IDs
+###############################################################
+print("\n" + "-"*80)
+print("STEP 4: Removing NA/missing IDs and duplicate participant IDs...")
+print("-"*80)
+
+if 'id' in df_raw.columns:
+    # Convert to numeric (this will turn empty strings and invalid values to NaN)
+    df_raw['id_numeric'] = pd.to_numeric(df_raw['id'], errors='coerce')
+    
+    # 4A: Remove NA/missing IDs
+    print("\n4A. Checking for NA/missing IDs...")
+    na_ids = df_raw['id_numeric'].isna()
+    n_na_ids = na_ids.sum()
+    
+    if n_na_ids > 0:
+        print(f"    Found {n_na_ids} responses with NA/missing IDs")
+        
+        # Show some examples
+        print(f"    Examples of NA ID responses:")
+        na_examples = df_raw[na_ids][['id']].head(10)
+        for idx, row in na_examples.iterrows():
+            print(f"      Index {idx}: id = '{row['id']}'")
+        
+        # Remove NA IDs
+        n_before = len(df_raw)
+        df_raw = df_raw[~na_ids].copy().reset_index(drop=True)
+        n_removed_na_ids = n_before - len(df_raw)
+        
+        print(f"\n    ✓ Removed {n_removed_na_ids} responses with NA/missing IDs")
+        print(f"    ✓ Remaining: {len(df_raw)}")
+    else:
+        print(f"    ✓ No NA/missing IDs found")
+        n_removed_na_ids = 0
+    
+    # 4B: Remove duplicate IDs (among remaining responses)
+    print("\n4B. Checking for duplicate IDs...")
+    
+    # Re-calculate id_numeric after removing NAs
+    df_raw['id_numeric'] = pd.to_numeric(df_raw['id'], errors='coerce')
+    
+    # Find duplicate IDs
+    id_counts = df_raw['id_numeric'].value_counts()
+    duplicate_ids = id_counts[id_counts > 1]
+    
+    if len(duplicate_ids) > 0:
+        print(f"    Found {len(duplicate_ids)} participant IDs that appear multiple times")
+        print(f"\n    Top 10 duplicate IDs:")
+        for id_val, count in duplicate_ids.head(10).items():
+            if pd.notna(id_val):
+                print(f"      ID {int(id_val)}: appears {count} times")
+        
+        # Count total rows with duplicate IDs
+        total_duplicate_rows = duplicate_ids.sum()
+        print(f"\n    Total rows with duplicate IDs: {total_duplicate_rows}")
+        
+        # Remove ALL occurrences of duplicate IDs
+        duplicate_ids_list = duplicate_ids.index.tolist()
+        
+        n_before = len(df_raw)
+        df_raw = df_raw[~df_raw['id_numeric'].isin(duplicate_ids_list)].copy().reset_index(drop=True)
+        n_removed_duplicates = n_before - len(df_raw)
+        
+        print(f"\n    ✓ Removed ALL {n_removed_duplicates} responses with duplicate participant IDs")
+        print(f"    ✓ Remaining: {len(df_raw)}")
+        
+        # Verification
+        print("\n    " + "-"*40)
+        print("    VERIFICATION:")
+        print("    " + "-"*40)
+        
+        still_there = df_raw[df_raw['id_numeric'].isin(duplicate_ids_list)]
+        if len(still_there) > 0:
+            print(f"    ⚠ ERROR: {len(still_there)} rows with target duplicate IDs still present!")
+        else:
+            print(f"    ✓ Confirmed: All {len(duplicate_ids)} duplicate IDs removed")
+        
+        # Check for any remaining duplicates
+        final_id_counts = df_raw['id_numeric'].value_counts()
+        final_duplicates = final_id_counts[final_id_counts > 1]
+        
+        if len(final_duplicates) > 0:
+            print(f"\n    ⚠ NOTE: Found {len(final_duplicates)} IDs still appearing multiple times")
+        else:
+            print(f"    ✓ Confirmed: No duplicate IDs remain in cleaned data")
+            
+    else:
+        print(f"    ✓ No duplicate participant IDs found")
+        n_removed_duplicates = 0
+    
+    # Summary for Step 4
+    print("\n" + "-"*40)
+    print("STEP 4 SUMMARY:")
+    print("-"*40)
+    print(f"Removed NA/missing IDs: {n_removed_na_ids}")
+    print(f"Removed duplicate IDs: {n_removed_duplicates}")
+    print(f"Total removed in Step 4: {n_removed_na_ids + n_removed_duplicates}")
+    print(f"Remaining: {len(df_raw)}")
+    
+else:
+    print("\n⚠ No 'id' column found in data")
+    n_removed_na_ids = 0
+    n_removed_duplicates = 0
+
+###############################################################
+# STEP 5: REMOVE INCOMPLETE RESPONSES (PROGRESS ONLY)
+###############################################################
+print("\n" + "-"*80)
+print("STEP 5: Removing incomplete responses (Progress ≠ 100)...")
+print("-"*80)
+
+if 'Progress' in df_raw.columns:
+    df_raw['progress_numeric'] = pd.to_numeric(df_raw['Progress'], errors='coerce')
+    
+    progress_dist = df_raw['progress_numeric'].value_counts().sort_index()
+    print(f"\nProgress distribution (top values):")
+    for prog_val, count in progress_dist.head(10).items():
+        print(f"  Progress = {prog_val}: {count} responses")
+    
+    # Find responses with Progress != 100
+    incomplete_progress = df_raw['progress_numeric'] != 100
+    n_incomplete_progress = incomplete_progress.sum()
+    
+    if n_incomplete_progress > 0:
+        print(f"\n✓ Found {n_incomplete_progress} responses with Progress ≠ 100")
+        
+        # Show some examples
+        print(f"\nExamples of incomplete progress:")
+        incomplete_examples = df_raw[incomplete_progress][['progress_numeric']].head(10)
+        for idx, row in incomplete_examples.iterrows():
+            prog = row['progress_numeric']
+            print(f"  Index {idx}: Progress = {prog:.0f}%")
+        
+        # Remove incomplete progress responses
+        n_before = len(df_raw)
+        df_raw = df_raw[~incomplete_progress].reset_index(drop=True)
+        n_removed_progress = n_before - len(df_raw)
+        
+        print(f"\n✓ Removed {n_removed_progress} responses with incomplete progress")
+        print(f"✓ Remaining: {len(df_raw)}")
+    else:
+        print(f"\n✓ All responses have Progress = 100")
+        n_removed_progress = 0
+else:
+    print("\n⚠ No 'Progress' column found in data")
+    n_removed_progress = 0
+
+###############################################################
+# STEP 6: CHECK FOR SPEEDERS (INFORMATIONAL)
+###############################################################
+print("\n" + "-"*80)
+print("STEP 6: Checking for speeders (informational only)...")
+print("-"*80)
+
+if len(df_raw) > 0 and 'Duration (in seconds)' in df_raw.columns:
+    df_raw['duration_seconds'] = pd.to_numeric(df_raw['Duration (in seconds)'], errors='coerce')
+    
+    median_duration = df_raw['duration_seconds'].median()
+    
+    if not pd.isna(median_duration) and median_duration > 0:
+        speeder_threshold = median_duration / 3
+        speeders = (df_raw['duration_seconds'] < speeder_threshold) & (df_raw['duration_seconds'].notna())
+        n_speeders = speeders.sum()
+        
+        print(f"Median completion time: {median_duration:.0f}s ({median_duration/60:.1f} min)")
+        print(f"Speeder threshold: <{speeder_threshold:.0f}s ({speeder_threshold/60:.1f} min)")
+        print(f"Speeders identified: {n_speeders} (NOT removed)")
+        
+        if n_speeders > 0:
+            print(f"\nFastest 5 completions:")
+            fastest = df_raw[speeders].nsmallest(5, 'duration_seconds')
+            for idx, row in fastest.iterrows():
+                dur = row['duration_seconds']
+                print(f"  Row {idx}: {dur:.0f}s ({dur/60:.1f} min)")
+    else:
+        print("⚠ Cannot calculate duration metrics")
+else:
+    print("⚠ No duration data available")
+
+###############################################################
+# STEP 7: CREATE CLEANED DATASET
+###############################################################
+print("\n" + "-"*80)
+print("STEP 7: Creating cleaned dataset...")
+print("-"*80)
+
+if len(df_raw) > 0:
+    # Calculate moderator
+    process_items = ['Q11_3', 'Q11_6', 'Q11_9']
+    result_items = ['Q11_13', 'Q11_15', 'Q11_17']
+    
+    process_score = df_raw[process_items].apply(clean_likert).mean(axis=1)
+    result_score = df_raw[result_items].apply(clean_likert).mean(axis=1)
+    
+    hedonic_orientation = process_score - result_score
+    median_val = hedonic_orientation.median()
+    purpose = np.where(hedonic_orientation >= median_val, 1.0, 0.0)
+    purpose[hedonic_orientation.isna()] = np.nan
+    
+    df = pd.DataFrame({
+        'unc1': clean_likert(df_raw['Q7_1']),
+        'unc2': clean_likert(df_raw['Q7_2']),
+        'unc3': clean_likert(df_raw['Q7_3']),
+        'ev1': clean_likert(df_raw['Q8_1']),
+        'ev2': clean_likert(df_raw['Q8_2']),
+        'ev3': clean_likert(df_raw['Q8_3']),
+        'sv1': clean_likert(df_raw['Q9_1']),
+        'sv2': clean_likert(df_raw['Q9_2']),
+        'sv3': clean_likert(df_raw['Q9_3']),
+        'sv4': clean_likert(df_raw['Q9_4']),
+        'pi1': clean_likert(df_raw['Q10_1']),
+        'pi2': clean_likert(df_raw['Q10_2']),
+        'pi3': clean_likert(df_raw['Q10_3']),
+        'pi4': clean_likert(df_raw['Q10_4']),
+        'purpose': purpose,
+        'gender': df_raw['Q3'].values,
+        'age': clean_likert(df_raw['Q2']),
+        'race_ethnicity': df_raw['Q4'].values,
+        'SES_MacArthur': clean_likert(df_raw['Q6_2']),
+    })
+    
+###############################################################
+    # FINAL REPORT
+###############################################################
+    
+    print(f"\nCLEANING SUMMARY:")
+    print(f"  Started with: {n_initial} responses")
+    print(f"  Step 3 - Removed Q1='No' responses: {n_removed_q1}")
+    print(f"  Step 4A - Removed NA/missing IDs: {n_removed_na_ids}")
+    print(f"  Step 4B - Removed duplicate IDs: {n_removed_duplicates}")
+    print(f"  Step 5 - Removed incomplete responses (Progress ≠ 100): {n_removed_progress}")
+    print(f"  ---")
+    print(f"  TOTAL REMOVED: {n_initial - len(df)}")
+    print(f"  FINAL SAMPLE: N = {len(df)}")
+    
+    sem_items_clean = ['unc1', 'unc2', 'unc3', 'ev1', 'ev2', 'ev3', 
+                       'sv1', 'sv2', 'sv3', 'sv4', 'pi1', 'pi2', 'pi3', 'pi4']
+    
+    print(f"\nSEM Item Completion Rates:")
+    for item in sem_items_clean:
+        n_valid = df[item].notna().sum()
+        pct = n_valid / len(df) * 100
+        print(f"  {item}: {n_valid}/{len(df)} ({pct:.1f}%)")
+    
+    complete_cases = df[sem_items_clean].dropna()
+    print(f"\nComplete cases (all 14 SEM items): {len(complete_cases)} ({len(complete_cases)/len(df)*100:.1f}%)")
+    
+    purpose_counts = df['purpose'].value_counts(dropna=False)
+    n_result = purpose_counts.get(0.0, 0)
+    n_process = purpose_counts.get(1.0, 0)
+    n_missing_purpose = df['purpose'].isna().sum()
+    
+    print(f"\nConsumption Purpose Distribution:")
+    print(f"  Result-oriented (0): {n_result}")
+    print(f"  Process-oriented (1): {n_process}")
+    print(f"  Missing: {n_missing_purpose}")
+    
+    if n_missing_purpose > 0:
+        print(f"\n  ⚠ Note: {n_missing_purpose} participants have missing purpose")
+        print(f"  This may occur if Q11 items were skipped despite Progress=100")
+        print(f"  Multi-group analysis will use n={n_result + n_process} ({n_result} + {n_process})")
+    else:
+        print(f"\n  ✓ All participants successfully classified into purpose groups")
+        print(f"  ✓ Multi-group analysis will use full sample: n={len(df)} ({n_result} + {n_process})")
+    
+    df.to_csv('qualtrics_data_cleaned.csv', index=False)
+    
+    print("\n" + "="*80)
+    print("✓ DATA CLEANING COMPLETE")
+    print("="*80)
+    print(f"Saved to: qualtrics_data_cleaned.csv")
+    print("="*80)
+    
+else:
+    print("\n⚠ ERROR: No data remaining!")
